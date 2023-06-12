@@ -325,4 +325,202 @@ def _bwd_segment_cmp(feat, arg, m):
     return out
 
 
+###################################################################################################
+## Libra Graph Partition
+def libra_vertex_cut(nc, node_degree, edgenum_unassigned,
+                     community_weights, u, v, w, out, N, N_e, dataset):
+    """
+    This function invokes C/C++ code for Libra based graph partitioning.
+    Parameter details are present in dgl/src/array/libra_partition.cc
+    """
+    _CAPI_DGLLibraVertexCut(nc,
+                            to_dgl_nd_for_write(node_degree),
+                            to_dgl_nd_for_write(edgenum_unassigned),
+                            to_dgl_nd_for_write(community_weights),
+                            to_dgl_nd(u),
+                            to_dgl_nd(v),
+                            to_dgl_nd(w),
+                            to_dgl_nd_for_write(out),
+                            N,
+                            N_e,
+                            dataset)
+
+
+def libra2dgl_build_dict(a, b, indices, ldt_key, gdt_key, gdt_value, node_map,
+                         offset, nc, c, fsize, dataset):
+    """
+    This function invokes C/C++ code for pre-processing Libra output.
+    After graph partitioning using Libra, during conversion from Libra output to DGL/DistGNN input,
+    this function creates dictionaries to assign local node ids to the partitioned nodes
+    and also to create a database of the split nodes.
+    Parameter details are present in dgl/src/array/libra_partition.cc
+    """
+    ret = _CAPI_DGLLibra2dglBuildDict(to_dgl_nd_for_write(a),
+                                      to_dgl_nd_for_write(b),
+                                      to_dgl_nd_for_write(indices),
+                                      to_dgl_nd_for_write(ldt_key),
+                                      to_dgl_nd_for_write(gdt_key),
+                                      to_dgl_nd_for_write(gdt_value),
+                                      to_dgl_nd_for_write(node_map),
+                                      to_dgl_nd_for_write(offset),
+                                      nc,
+                                      c,
+                                      fsize,
+                                      dataset)
+    return ret
+
+
+def libra2dgl_build_adjlist(feat, gfeat, adj, inner_node, ldt, gdt_key,
+                            gdt_value, node_map, lr, lrtensor, num_nodes,
+                            nc, c, feat_size, labels, trainm, testm, valm,
+                            glabels, gtrainm, gtestm, gvalm, feat_shape):
+    """
+    This function invokes C/C++ code for pre-processing Libra output.
+    After graph partitioning using Libra, once the local and global dictionaries are built,
+    for each node in each partition, this function copies the split node details from the
+    global dictionary. It also copies features, label, train, test, and validation information
+    for each node from the input graph to the corresponding partitions.
+    Parameter details are present in dgl/src/array/libra_partition.cc
+    """
+    _CAPI_DGLLibra2dglBuildAdjlist(to_dgl_nd(feat),
+                                   to_dgl_nd_for_write(gfeat),
+                                   to_dgl_nd_for_write(adj),
+                                   to_dgl_nd_for_write(inner_node),
+                                   to_dgl_nd(ldt),
+                                   to_dgl_nd(gdt_key),
+                                   to_dgl_nd(gdt_value),
+                                   to_dgl_nd(node_map),
+                                   to_dgl_nd_for_write(lr),
+                                   to_dgl_nd(lrtensor),
+                                   num_nodes,
+                                   nc,
+                                   c,
+                                   feat_size,
+                                   to_dgl_nd(labels),
+                                   to_dgl_nd(trainm),
+                                   to_dgl_nd(testm),
+                                   to_dgl_nd(valm),
+                                   to_dgl_nd_for_write(glabels),
+                                   to_dgl_nd_for_write(gtrainm),
+                                   to_dgl_nd_for_write(gtestm),
+                                   to_dgl_nd_for_write(gvalm),
+                                   feat_shape)
+
+
+
+def libra2dgl_set_lr(gdt_key, gdt_value, lrtensor, nc, Nn):
+    """
+    This function invokes C/C++ code for pre-processing Libra output.
+    To prepare the graph partitions for DistGNN input, this function sets the leaf
+    and root (1-level tree) among the split copies (across different partitions)
+    of a node from input graph.
+    Parameter details are present in dgl/src/array/libra_partition.cc
+    """
+    _CAPI_DGLLibra2dglSetLR(to_dgl_nd(gdt_key),
+                            to_dgl_nd(gdt_value),
+                            to_dgl_nd_for_write(lrtensor),
+                            nc,
+                            Nn)
+
+
+##################################################
+## DistGNN functions
+def fdrpa_gather_emb_lr(feat, feat_shape, adj, send_feat_list, offset,
+                        send_node_list, send_to_node_list, selected_nodes,
+                        in_degs, ver2part, ver2part_index, width, feat_size,
+                        cur_part, soffset_base, soffset_cur, node_map, num_parts):
+    sfl_a            = to_dgl_nd_for_write(send_feat_list)
+    feat_a           = to_dgl_nd(feat)
+    adj_a            = to_dgl_nd(adj)
+    snl_a            = to_dgl_nd_for_write(send_node_list)
+    stnl_a           = to_dgl_nd_for_write(send_to_node_list)
+    selected_nodes_a = to_dgl_nd(selected_nodes)
+    node_map_a       = to_dgl_nd(node_map)
+    _CAPI_DGLKernelFdrpaGatherEmbLR(feat_a,
+                                    feat_shape,
+                                    adj_a,
+                                    sfl_a,
+                                    offset,
+                                    snl_a,
+                                    stnl_a,
+                                    selected_nodes_a,
+                                    to_dgl_nd(in_degs),
+                                    to_dgl_nd(ver2part),
+                                    to_dgl_nd(ver2part_index),
+                                    width,
+                                    feat_size,
+                                    cur_part,
+                                    soffset_base,
+                                    soffset_cur,
+                                    node_map_a,
+                                    num_parts)
+
+
+def scatter_reduce_lr(otf, offsetf, otn, offsetn, neigh, degs, node_map,
+                      dim, feat_size, num_parts, recv_list_nodes, pos,
+                      count, cur_part):
+    node_map_a = to_dgl_nd(node_map)
+    _CAPI_DGLKernelScatterReduceLR(to_dgl_nd(otf),
+                                   offsetf,
+                                   to_dgl_nd(otn),
+                                   offsetn,
+                                   to_dgl_nd_for_write(neigh),
+                                   to_dgl_nd_for_write(degs),
+                                   node_map_a,
+                                   dim,
+                                   feat_size,
+                                   num_parts,
+                                   to_dgl_nd_for_write(recv_list_nodes),
+                                   to_dgl_nd_for_write(pos),
+                                   count,
+                                   cur_part)
+
+
+def fdrpa_gather_emb_rl(feat, feat_shape, send_feat_list, offset, recv_list_nodes,
+                        lim, in_degs, feat_size, node_map, num_parts):
+    node_map_a = to_dgl_nd(node_map)
+    _CAPI_DGLKernelFdrpaGatherEmbRL(to_dgl_nd(feat),
+                                    feat_shape,
+                                    to_dgl_nd_for_write(send_feat_list),
+                                    offset,
+                                    to_dgl_nd(recv_list_nodes),
+                                    lim,
+                                    to_dgl_nd(in_degs),
+                                    feat_size,
+                                    node_map_a,
+                                    num_parts)
+
+
+def scatter_reduce_rl(otf, offset, stn, lim, in_degs, neigh, node_map, dim, feat_size,
+                      num_parts):
+    node_map_a = to_dgl_nd(node_map)
+    _CAPI_DGLKernelScatterReduceRL(to_dgl_nd(otf),
+                                   offset,
+                                   to_dgl_nd(stn),
+                                   lim,
+                                   to_dgl_nd_for_write(in_degs),
+                                   to_dgl_nd_for_write(neigh),
+                                   node_map_a,
+                                   dim,
+                                   feat_size,
+                                   num_parts)
+
+def fdrpa_comm_buckets(adj, selected_nodes, ver2part, ver2part_index, node_map,
+                       buckets, lf, width, num_parts, cur_part):
+    selected_nodes_a =  to_dgl_nd(selected_nodes)
+    node_map_a = to_dgl_nd(node_map)
+    _CAPI_DGLKernelFdrpaCommBuckets(to_dgl_nd(adj),
+                                    selected_nodes_a,
+                                    to_dgl_nd_for_write(ver2part),
+                                    to_dgl_nd_for_write(ver2part_index),
+                                    node_map_a,
+                                    to_dgl_nd_for_write(buckets),
+                                    to_dgl_nd(lf),
+                                    width,
+                                    num_parts,
+                                    cur_part)
+
+
+
+
 _init_api("dgl.sparse")
